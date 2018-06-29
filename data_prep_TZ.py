@@ -379,31 +379,71 @@ arcpy.ClearEnvironment("snapRaster")
 cs = (arcpy.GetRasterProperties_management(scatch, 'CELLSIZEX')).getOutput(0)
 arcpy.env.extent = arcpy.Describe(scatch).extent
 hydrolakes = datadir + "HydroLAKES\\HydroLAKES_polys_v10.gdb\\HydroLAKES_polys_v10"
+#Convert lake polygons to raster
 lakeras = wd+"hydrolakes"
 arcpy.FeatureToRaster_conversion(hydrolakes, field="Hylak_id", out_raster=lakeras, cell_size=cs)
+#Crop flow accumulation to lake boundaries
 lakeaccras = wd + "lakeacc"
 lakeacc = Con(Raster(lakeras) > 0, Raster(flowaccras),0)
 lakeacc.save(lakeaccras)
-ZonalStatisticsAsTable(scatch, "Value", lakeaccras,"lakeacc", ignore_nodata="DATA", statistics_type="MAXIMUM")
-arcpy.AlterField_management("lakeaccindex","MAX","CatLakInd")
+#Create catchment lake pourpoint raster
+catchmaxlakacc = wd + "catmaxlakacc"
+maxacc = ZonalStatistics(in_zone_data=scatch,zone_field="Value", in_value_raster=lakeaccras, statistics_type="MAXIMUM",ignore_nodata="DATA")
+maxacc.save(catchmaxlakacc)
+catlakpoint =wd + "catlakpoint"
+pour = Con(Raster(catchmaxlakacc) == Raster(lakeaccras), Raster(lakeaccras), 0)
+pour.save(catlakpoint)
+catlakid =wd + "catlakid"
+lakid = Con(Raster(catlakpoint)>0, Raster(lakeras))
+lakid.save(catlakid)
+#Extract values to table
+ZonalStatisticsAsTable(in_zone_data=scatch, zone_field="Value", in_value_raster=catlakpoint, out_table=wd + 'catlakacc.dbf', ignore_nodata='DATA', statistics_type='MAXIMUM')
+ZonalStatisticsAsTable(in_zone_data=scatch, zone_field="Value", in_value_raster=catlakid, out_table=wd + 'catlakid.dbf', ignore_nodata='DATA', statistics_type='MAJORITY')
+#Output catchment CatLakInd
+arcpy.CopyRows_management(wd + 'catlakacc.dbf', 'lakeacc')
+arcpy.AlterField_management(in_table="lakeacc",field="MAX",new_field_name="CatLakInd",new_field_alias='CatLakInd')
+#Join tables
+arcpy.MakeTableView_management(wd + 'catlakacc.dbf', 'catlakacc')
+arcpy.AddJoin_management('catlakacc', 'Value', wd + 'catlakid.dbf','Value')
+catlakacid='catlakaccid.dbf'
+arcpy.CopyRows_management('catlakacc', wd + 'catlakaccid.dbf')
+arcpy.Delete_management(wd + 'catlakacc.dbf')
+arcpy.Delete_management(wd + 'catlakid.dbf')
+#Only keep records of downstream-most intersecting river segment for each lake
+duplitab = wd + catlakacid[:-4]+'_identical.dbf'
+arcpy.FindIdentical_management(catlakacid,duplitab,fields='MAJORITY',output_record_option='ONLY_DUPLICATES')
+dupliID = [id[0] for id in arcpy.da.SearchCursor(wd + duplitab, ['IN_FID'])]
+[f.name for f in arcpy.ListFields(catlakacid)]
+duplicates = [[row[0],row[1],row[2]] for row in arcpy.da.SearchCursor(catlakacid, ['Value','MAJORITY','MAX']) if row[0] in dupliID]
+if len(duplicates)>0:
+    d={}
+    ldel=[]
+    for sub in duplicates: #Inspired from https://stackoverflow.com/questions/34334381/removing-duplicates-from-a-list-of-lists-based-on-a-comparison-of-an-element-of
+        k=sub[1]
+        if k not in d.keys():
+            d[k]=sub
+        elif sub[2] > d[k][2]:
+            ldel.append(d[k][0])
+            d[k]=sub
+        else:
+            #print(sub[0])
+            ldel.append(sub[0])
+expr= 'NOT "VALUE" IN ' + str(tuple(ldel))
+arcpy.MakeTableView_management(catlakacid, out_view='catlakacid_view', where_clause=expr)
+arcpy.CopyRows_management('catlakacid_view',wd+'catlakac_sub.dbf')
+arcpy.Delete_management(duplitab)
 arcpy.Delete_management(lakeras)
-arcpy.Delete_management(lakeacc)
-#Percentage watershed drained from reservoir
-hydrolakes = datadir + "HydroLAKES\\HydroLAKES_polys_v10.gdb\\HydroLAKES_polys_v10"
-arcpy.MakeFeatureLayer_management(hydrolakes, 'reservoirlyr')
-arcpy.SelectLayerByAttribute_management('reservoirlyr', "NEW_SELECTION", 'Lake_type > 1')
-reservoiras = wd+"hydrores"
-arcpy.FeatureToRaster_conversion('reservoirlyr', field="Hylak_id", out_raster=reservoiras, cell_size=cs)
-resaccras = wd + "resacc.tif"
-resacc = Con(Raster(reservoiras) > 0, flowaccras,0)
-resacc.save(resaccras)
-ZonalStatisticsAsTable(scatch, "Value", resaccras,"resacc", ignore_nodata="DATA", statistics_type="MAXIMUM")
-arcpy.AlterField_management("resaccindex","MAX","CatResInd")
-arcpy.Delete_management('reservoirlyr')
-arcpy.Delete_management(reservoiras)
-arcpy.Delete_management(resaccras)
-arcpy.Delete_management(resacc)
 arcpy.ClearEnvironment("extent")
+
+#Percentage watershed drained from reservoir #WOULD HAVE TO REPRODUCE WORKFLOW ABOVE TO CONTINUE CODE BLOCK BELOW
+# hydrolakes = datadir + "HydroLAKES\\HydroLAKES_polys_v10.gdb\\HydroLAKES_polys_v10"
+# arcpy.MakeFeatureLayer_management(hydrolakes, 'reservoirlyr')
+# arcpy.SelectLayerByAttribute_management('reservoirlyr', "NEW_SELECTION", 'Lake_type > 1')
+# reservoiras = wd+"hydrores"
+# arcpy.FeatureToRaster_conversion('reservoirlyr', field="Hylak_id", out_raster=reservoiras, cell_size=cs)
+# resaccras = wd + "resacc.tif"
+# resacc = Con(Raster(reservoiras) > 0, flowaccras,0)
+# resacc.save(resaccras)
 
 #####################################################
 #Lithology
@@ -711,26 +751,11 @@ network = outhydro + feature_dat + "\\" + out_name
 #Set flow direction of geometric network, a pre-requisite for tracing
 arcpy.SetFlowDirection_management(network, flow_option = "WITH_DIGITIZED_DIRECTION")
 
-#Create subset of geo network for river order < 3
-#Create feature dataset
-feature_dat = "tznet_u2"
-pr = arcpy.Describe(slineattri).SpatialReference
-arcpy.CreateFeatureDataset_management(outhydro, feature_dat, pr)
-arcpy.MakeFeatureLayer_management(slineattri, 'slineattri_u2', "ReaOrd<3")
-arcpy.CopyFeatures_management('slineattri_u2',outhydro+"\\"+feature_dat+"\\lines_u2")
-#Create geo network
-out_name = "tznet_u2"
-in_source_feature_classes = "lines_u2 SIMPLE_EDGE NO"
-arcpy.CreateGeometricNetwork_management(outhydro + "\\" + feature_dat, out_name, in_source_feature_classes)
-network = outhydro + feature_dat + "\\" + out_name
-#Set flow direction of geometric network, a pre-requisite for tracing
-arcpy.SetFlowDirection_management(network, flow_option = "WITH_DIGITIZED_DIRECTION")
-
 ###################################################################
 # Create points for tracing
 arcpy.FeatureVerticesToPoints_management(in_features=slineattri,out_feature_class=outhydro+'linemidpoints_attri', point_location='MID')
 #Make list of variables
-arcpy.MakeFeatureLayer_management(outhydro+'linemidpoints_attri', 'spointlyr',where_clause="ReaOrd>2") ####### UPDATE #########
+arcpy.MakeFeatureLayer_management(outhydro+'linemidpoints_attri', 'spointlyr',where_clause="ReaOrd>1") ####### UPDATE #########
 catstatslist = [[f.name, 'SUM'] for f in arcpy.ListFields('spointlyr') if not f.name in ['CatLakInd', 'CatResInd','CatElvMax','CatElvMin','ReaOrd','FlowAcc']][12:-1] #Create list of all fields to sum
 sumfields = [f.name for f in arcpy.ListFields('spointlyr') if not f.name in ['CatLakInd', 'CatResInd','CatElvMax','CatElvMin','ReaOrd','FlowAcc']][12:-1]
 arcpy.env.workspace=wd+'watershed_attri.gdb'
@@ -742,7 +767,7 @@ arcpy.env.workspace=wd+'watershed_attri.gdb'
 sumout_tab = gdbname_ws+ 'Ws_Attri_Sum'
 scratch_tab = gdbname_ws+ 'scratch'
 sumtabfields = sumfields + ['GridID']
-arcpy.MakeFeatureLayer_management(outhydro+'linemidpoints_attri', 'spointlyrreduce',where_clause="ReaOrd>2") #Create another temporary layer as numpy array cannot hold the entire table (MemoryError: cannot allocate array memory)
+arcpy.MakeFeatureLayer_management(outhydro+'linemidpoints_attri', 'spointlyrreduce',where_clause="ReaOrd>1") #Create another temporary layer as numpy array cannot hold the entire table (MemoryError: cannot allocate array memory)
 array_sum =arcpy.da.FeatureClassToNumPyArray('spointlyrreduce', sumtabfields)
 arcpy.da.NumPyArrayToTable(array_sum, scratch_tab)
 #arcpy.CreateTable_management(wd+'watershed_attri.gdb', 'Ws_Attri_Sum', scratch_tab)
@@ -760,7 +785,7 @@ array_types = [(i,array_sum[i].dtype.kind) for i in nms if array_sum[i].dtype.ki
 
 #Make subset of reaches to get data for
 tz_bd = wd+'gadm1_lev0_Tanzania.shp'
-arcpy.MakeFeatureLayer_management(outhydro+'linemidpoints_attri', 'spointlyr',where_clause="ReaOrd>2") ####### UPDATE #########
+arcpy.MakeFeatureLayer_management(outhydro+'linemidpoints_attri', 'spointlyr',where_clause="ReaOrd>1") ####### UPDATE #########
 arcpy.SelectLayerByLocation_management('spointlyr', 'INTERSECT', tz_bd, selection_type='SUBSET_SELECTION')
 arcpy.GetCount_management('spointlyr')
 start = time.time()
@@ -888,9 +913,74 @@ print(end - start)
 
 ########################################################################################################################
 # Compute watershed lake and reservoir indices
+#Order from low to high accumulation
+#Loop through each segment with max accumulation, select all segments downstream
+#Assign accumulation to all segments downstream
 
+wd+'catlakac_sub.dbf'
 
-
+#Make subset of reaches to get data for
+tz_bd = wd+'gadm1_lev0_Tanzania.shp'
+arcpy.MakeFeatureLayer_management(outhydro+'linemidpoints_attri', 'spointlyr',where_clause="ReaOrd>1") ####### UPDATE #########
+arcpy.SelectLayerByLocation_management('spointlyr', 'INTERSECT', tz_bd, selection_type='SUBSET_SELECTION')
+arcpy.GetCount_management('spointlyr')
+start = time.time()
+x=0
+by_col = numpy.empty([0, len(array_types)], dtype=array_types)
+with arcpy.da.SearchCursor('spointlyr', ["GridID"]) as cursor:
+    for row in cursor:
+            #print(x)
+            #x=x+1
+            print(row[0])
+            if row[0]==294478:
+                #print(row[0])
+                subcatch_id = row[0]
+                expr = '"GridID" = %s' %subcatch_id
+                arcpy.SelectLayerByAttribute_management('spointlyr', 'NEW_SELECTION', expr)
+                arcpy.TraceGeometricNetwork_management(in_geometric_network= network, out_network_layer = "up_trace_lyr", in_flags = "spointlyr",
+                                                       in_trace_task_type= "TRACE_UPSTREAM")
+                up_tr = "up_trace_lyr\\lines"
+                #print('Trace done!')
+                try:
+                    array=arcpy.da.FeatureClassToNumPyArray(up_tr, sumfields)
+                    #print('Feature class to numpy array done!')
+                    if len(by_col)==0:
+                        by_col = numpy.array([tuple([array[i].sum() for i in nms if array[i].dtype.kind in ('i', 'f')]+[row[0]])],
+                                              dtype=array_types)
+                    elif len(by_col)>0 and len(by_col)<500:
+                        by_col = numpy.concatenate((by_col,numpy.array([tuple([array[i].sum() for i in nms if array[i].dtype.kind in ('i', 'f')]+[row[0]])],dtype=array_types)),axis=0)
+                    elif len(by_col)==500:
+                        by_col = numpy.concatenate((by_col,numpy.array([tuple([array[i].sum() for i in nms if array[i].dtype.kind in ('i', 'f')]+[row[0]])],dtype=array_types)),axis=0)
+                        scratch=arcpy.da.NumPyArrayToTable(by_col, scratch_tab)
+                        #print('Numpy array to table done!')
+                        arcpy.Append_management(scratch_tab, sumout_tab, "TEST")
+                        #print('Append done!')
+                        arcpy.Delete_management(scratch_tab)
+                        by_col = numpy.empty([0, len(array_types)], dtype=array_types)
+                except:
+                    print('Error with numpy array method, use arcpy.Statistics_analysis')
+                    inmemtab = r"in_memory/scratch"
+                    arcpy.Statistics_analysis(up_tr, inmemtab, catstatslist)
+                    print("stats analysis failed")
+                    arcpy.AddField_management(inmemtab, field_name='GridID', field_type='LONG')
+                    #with arcpy.da.UpdateCursor(inmemtab, ['GridID']) as cursormem:
+                    #    for rowmem in cursormem:
+                    #        rowmem[0]=row[0]
+                    #        cursormem.updateRow(rowmem)
+                    #del rowmem
+                    #del cursormem
+                    arcpy.CalculateField_management(inmemtab,field='GridID', expression=row[0])
+                    arcpy.Append_management(inmemtab, memerror_tab, "TEST")
+                    arcpy.Delete_management(inmemtab)
+    scratch=arcpy.da.NumPyArrayToTable(by_col, scratch_tab)
+    #print('Numpy array to table done!')
+    arcpy.Append_management(scratch_tab, sumout_tab, "TEST")
+arcpy.Delete_management(scratch_tab)
+arcpy.Delete_management('spointlyr')
+del row
+del cursor
+end = time.time()
+print(end - start)
 
 
 #################################################
