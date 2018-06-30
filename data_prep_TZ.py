@@ -400,14 +400,11 @@ lakid.save(catlakid)
 #Extract values to table
 ZonalStatisticsAsTable(in_zone_data=scatch, zone_field="Value", in_value_raster=catlakpoint, out_table=wd + 'catlakacc.dbf', ignore_nodata='DATA', statistics_type='MAXIMUM')
 ZonalStatisticsAsTable(in_zone_data=scatch, zone_field="Value", in_value_raster=catlakid, out_table=wd + 'catlakid.dbf', ignore_nodata='DATA', statistics_type='MAJORITY')
-#Output catchment CatLakInd
-arcpy.CopyRows_management(wd + 'catlakacc.dbf', 'lakeacc')
-arcpy.AlterField_management(in_table="lakeacc",field="MAX",new_field_name="CatLakInd",new_field_alias='CatLakInd')
 #Join tables
 arcpy.MakeTableView_management(wd + 'catlakacc.dbf', 'catlakacc')
 arcpy.AddJoin_management('catlakacc', 'Value', wd + 'catlakid.dbf','Value')
 catlakacid= wd +'catlakaccid.dbf'
-arcpy.CopyRows_management('catlakacc', wd + 'catlakaccid.dbf')
+arcpy.CopyRows_management('catlakacc',catlakacid)
 arcpy.Delete_management(wd + 'catlakacc.dbf')
 arcpy.Delete_management(wd + 'catlakid.dbf')
 #Only keep records of downstream-most intersecting river segment for each lake
@@ -963,29 +960,34 @@ for k, v in maxaccdic.iteritems(): #For each segment downstream of a lake
 #Make table of watershed lake index
 wslaktab =  gdbname_ws+'Ws_lakeindex'
 arcpy.MakeTableView_management(sline, 'sline_view')
-arcpy.AddJoin_management('sline_view', 'GridID', wd+gdbname_cat+'/lakeacc', 'Value')
+arcpy.AddJoin_management('sline_view', 'GridID', catlakacid, 'Value')
 arcpy.CopyRows_management('sline_view', wslaktab)
-
-#######TO RUN, THEN MERGE WITH MAIN ATTRIBUTE TABLE, COMPUTE PROPER LAKE INDEX, RE-RUN DEDUCTIVE CLASSIFICATION
 arcpy.AddField_management(in_table=wslaktab, field_name='MaxLakAcc', field_type='LONG')
 arcpy.CalculateField_management(wslaktab, 'MaxLakAcc', expression=0)
 arcpy.AddField_management(in_table=wslaktab, field_name='Hylak_id', field_type='LONG')
 
-[f.name for f in arcpy.ListFields(wslaktab)]
-
 with arcpy.da.UpdateCursor(wslaktab, ['GridID', 'Value','MaxLakAcc', 'MAX','Hylak_id','MAJORITY']) as cursor:
+    x=0
     for row in cursor:
-        if row[0]==row[1]: #If segment intersects lake, get accumulation value from Catchment lakeacc table
-            row[2]=row[3]
-            row[4]=row[5]
-        if row[0] in maxaccdicsub.keys(): #IF segment is downstream from a lake
+        print(x)
+        x=x+1
+        if row[0]==row[1]: #If segment intersects lake,
+            row[2]=row[3]  #get accumulation value from Catchment lakeacc table
+            row[4]=row[5]  #get HydroLAKES ID by Catchment table
+        if row[0] in maxaccdicsub.keys(): #If segment is downstream from a lake
             row[2]=maxaccdicsub[row[0]][0]  #Get accumulation from the dictionary
-            row[2]=maxaccdicsub[row[0]][5]
+            row[4]=maxaccdicsub[row[0]][1]  #Get HydroLAKES ID from the dictionary
         cursor.updateRow(row)
 del row
 del cursor
 
-#################################################
+#Delete superfluous fields
+delfield = [f.name for f in arcpy.ListFields(wslaktab) if not f.name in ['OBJECTID','GridID','MaxLakAcc','Hylak_id']]
+for f in delfield:
+    print(f)
+    arcpy.DeleteField_management(wslaktab, f)
+
+###################################################################################################################################################
 #Make a copy and merge tables with SUM statistics
 arcpy.Copy_management(in_data=memerror_tab,out_data='Ws_Attri_Sum_MemoryError_20180531')
 arcpy.Copy_management(in_data=sumout_tab,out_data=sumout_tab+'_20180531')
@@ -1048,21 +1050,12 @@ arcpy.Delete_management(sumout_tab+'_identical')
 arcpy.Delete_management(wd+'compare')
 
 ###################################################
-# Join SUM and MAX statistics table
-# for fd in arcpy.ListFields(maxout_tab):
-#     if 'Cat' in fd.name: arcpy.AlterField_management(maxout_tab, fd.name, new_field_name=fd.name.replace('Cat','Ws'))
-#     if 'Cat' in fd.aliasName: arcpy.AlterField_management(maxout_tab, fd.name.replace('Cat','Ws'), new_field_alias=fd.aliasName.replace('Cat','Ws'))
-# arcpy.MakeTableView_management('Ws_Attri_Sum_nodupli', 'Ws_Attri_Sum_noduplilyr')
-# arcpy.AddJoin_management('Ws_Attri_Sum_noduplilyr', 'GridID', maxout_tab, 'GridID')
-# ws_tab=gdbname_ws+'Ws_Attri'
-# arcpy.CopyRows_management('Ws_Attri_Sum_noduplilyr',ws_tab)
-# arcpy.Delete_management('Ws_Attri_Sum_noduplilyr')
-# arcpy.DeleteField_management(ws_tab, ['OBJECTID_1','GridID_1'])
+# Export to new layer for subsequent edits
+ws_tab=gdbname_ws+'Ws_Attri'
+arcpy.CopyRows_management('Ws_Attri_Sum_nodupli',ws_tab)
 
 ###################################################
 # Compute final variables for watersheds
-areadivlist = [f.name for f in arcpy.ListFields(ws_tab) if not f.name in ['OBJECTID','WsWatOcc','WsWatcha','WsWatSea','WsLen_1','GridID',
-                                                                              'WsRoadDen','WsDamDen','WsMineDen','WsLakInd', 'WsResInd','WsElvMax']] #Keep area as first field and don't divide for dam, roads, mines, and PA density
 watextdivlist = ['WsWatExt','WsWatOcc','WsWatcha','WsWatSea']
 with arcpy.da.UpdateCursor(ws_tab,watextdivlist) as cursor:
     for row in cursor:
@@ -1073,6 +1066,9 @@ with arcpy.da.UpdateCursor(ws_tab,watextdivlist) as cursor:
 del row
 del cursor
 
+areadivlist = [f.name for f in arcpy.ListFields(ws_tab) if not f.name in ['OBJECTID','WsWatOcc','WsWatcha','WsWatSea','WsLen_1','GridID',
+                                                                          'WsRoadDen','WsDamDen','WsMineDen','WsLakInd', 'MaxLakAcc','WsResInd',
+                                                                          'WsElvMax','Hylak_id']] #Keep area as first field and don't divide for dam, roads, mines, and PA density
 with arcpy.da.UpdateCursor(ws_tab,areadivlist) as cursor:
     for row in cursor:
         for i in range(1,len(areadivlist)): #Iterate over every selected field after area and divide it by watershed area
@@ -1129,14 +1125,14 @@ arcpy.AlterField_management("dir","MAJORITY","ReaDirMaj")
 #Curvature
 ZonalStatisticsAsTable(sseg, "Value", wd+"profilcurvat",out_table="profilcurvat",ignore_nodata="DATA", statistics_type="MEAN")
 arcpy.AlterField_management("profilcurvat","MEAN","ReaCurvAvg")
-#Protected areas
-wdpa = datadir+'WDPA_Mar2018_Public\\WDPA_Mar2018_Public.gdb\\WDPA_poly_Mar2018'
-arcpy.Dissolve_management(wdpa, wd+'wdpadissolve.shp')
-arcpy.Intersect_analysis([sline,wdpa],wd+'wdpalineinters.shp')
-arcpy.AddGeometryAttributes_management(wd+'wdpalineinters.shp', Geometry_Properties="LENGTH_GEODESIC", Length_Unit="KILOMETERS")
-arcpy.Statistics_analysis(wd+'wdpalineinters.shp', "PA", [["LENGTH_GEO", "SUM"]], case_field="GridID")
-arcpy.AlterField_management("PA","SUM_LENGTH_GEO",new_field_name="ReaPAPer",new_field_alias='ReaPAPer')
-arcpy.Delete_management(wd+'wdpalineinters.shp')
+#Protected areas NEEDS TROUBLESHOOTING: DISSOLVE DOES NOT WORK. Should just convert to raster
+# wdpa = datadir+'WDPA_Mar2018_Public\\WDPA_Mar2018_Public.gdb\\WDPA_poly_Mar2018'
+# arcpy.Dissolve_management(wdpa, wd+'wdpadissolve.shp')
+# arcpy.Intersect_analysis([sline,wdpa],wd+'wdpalineinters.shp')
+# arcpy.AddGeometryAttributes_management(wd+'wdpalineinters.shp', Geometry_Properties="LENGTH_GEODESIC", Length_Unit="KILOMETERS")
+# arcpy.Statistics_analysis(wd+'wdpalineinters.shp', "PA", [["LENGTH_GEO", "SUM"]], case_field="GridID")
+# arcpy.AlterField_management("PA","SUM_LENGTH_GEO",new_field_name="ReaPAPer",new_field_alias='ReaPAPer')
+# arcpy.Delete_management(wd+'wdpalineinters.shp')
 
 arcpy.MakeTableView_management("elv","elvview")
 arcpy.AddJoin_management("elvview", 'Value', "dir", 'Value')
@@ -1241,13 +1237,23 @@ with arcpy.da.UpdateCursor(slinecatws, ['WsArea','WsLen_1','WsDen','WsRoadDen','
         cursor.updateRow(row)
     del row, cursor
 
-#Compute lake index and reservoir index
-with arcpy.da.UpdateCursor(slinecatws, ['CatFlowAcc','WsLakInd', 'WsResInd']) as cursor:
+#Compute lake index
+arcpy.MakeFeatureLayer_management(slinecatws, 'slinecatws_lyr')
+arcpy.AddJoin_management('slinecatws_lyr', 'GridID', wslaktab, 'GridID')
+slinecatws_index=gdbname_ws+'slinecatws_lakeindex'
+arcpy.CopyRows_management('slinecatws_lyr',slinecatws_index)
+arcpy.DeleteField_management(slinecatws_index, ['OBJECTID_1','GridID_1'])
+
+[f.name for f in arcpy.ListFields(slinecatws_index)]
+with arcpy.da.UpdateCursor(slinecatws_index, ['CatFlowAcc','WsLakInd','MaxLakAcc']) as cursor:
     for row in cursor:
-        row[1]=row[1]/row[0]
-        row[2]=row[2]/row[0]
+        row[1]=float(row[2])/float(row[0])
         cursor.updateRow(row)
     del row, cursor
+arcpy.CopyRows_management(slinecatws_index,slinecatws)
+arcpy.Delete_management(slinecatws_index)
+arcpy.DeleteField_management(slinecatws, 'WsResInd')
+arcpy.DeleteField_management(slinecatws, 'MaxLakAcc')
 
 ###############################
 # Add reach characteristics
