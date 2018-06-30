@@ -24,6 +24,7 @@ import numpy.lib.recfunctions
 import math
 import time
 import glob
+from collections import defaultdict
 
 arcpy.env.overwriteOutput = True
 arcpy.env.qualifiedFieldNames = False
@@ -405,16 +406,16 @@ arcpy.AlterField_management(in_table="lakeacc",field="MAX",new_field_name="CatLa
 #Join tables
 arcpy.MakeTableView_management(wd + 'catlakacc.dbf', 'catlakacc')
 arcpy.AddJoin_management('catlakacc', 'Value', wd + 'catlakid.dbf','Value')
-catlakacid='catlakaccid.dbf'
+catlakacid= wd +'catlakaccid.dbf'
 arcpy.CopyRows_management('catlakacc', wd + 'catlakaccid.dbf')
 arcpy.Delete_management(wd + 'catlakacc.dbf')
 arcpy.Delete_management(wd + 'catlakid.dbf')
 #Only keep records of downstream-most intersecting river segment for each lake
 duplitab = wd + catlakacid[:-4]+'_identical.dbf'
 arcpy.FindIdentical_management(catlakacid,duplitab,fields='MAJORITY',output_record_option='ONLY_DUPLICATES')
-dupliID = [id[0] for id in arcpy.da.SearchCursor(wd + duplitab, ['IN_FID'])]
+dupliID = [id[0] for id in arcpy.da.SearchCursor(duplitab, ['IN_FID'])]
 [f.name for f in arcpy.ListFields(catlakacid)]
-duplicates = [[row[0],row[1],row[2]] for row in arcpy.da.SearchCursor(catlakacid, ['Value','MAJORITY','MAX']) if row[0] in dupliID]
+duplicates = [[row[0],row[1],row[2]] for row in arcpy.da.SearchCursor(catlakacid, ['OID','MAJORITY','MAX']) if row[0] in dupliID]
 if len(duplicates)>0:
     d={}
     ldel=[]
@@ -428,7 +429,7 @@ if len(duplicates)>0:
         else:
             #print(sub[0])
             ldel.append(sub[0])
-expr= 'NOT "VALUE" IN ' + str(tuple(ldel))
+expr= 'NOT "OID" IN ' + str(tuple(ldel))
 arcpy.MakeTableView_management(catlakacid, out_view='catlakacid_view', where_clause=expr)
 arcpy.CopyRows_management('catlakacid_view',wd+'catlakac_sub.dbf')
 arcpy.Delete_management(duplitab)
@@ -916,72 +917,73 @@ print(end - start)
 #Order from low to high accumulation
 #Loop through each segment with max accumulation, select all segments downstream
 #Assign accumulation to all segments downstream
-
-wd+'catlakac_sub.dbf'
-
 #Make subset of reaches to get data for
-tz_bd = wd+'gadm1_lev0_Tanzania.shp'
-arcpy.MakeFeatureLayer_management(outhydro+'linemidpoints_attri', 'spointlyr',where_clause="ReaOrd>1") ####### UPDATE #########
-arcpy.SelectLayerByLocation_management('spointlyr', 'INTERSECT', tz_bd, selection_type='SUBSET_SELECTION')
-arcpy.GetCount_management('spointlyr')
+arcpy.MakeFeatureLayer_management(outhydro+'linemidpoints_attri', 'spointlyr',where_clause="ReaOrd>=1")
 start = time.time()
 x=0
-by_col = numpy.empty([0, len(array_types)], dtype=array_types)
-with arcpy.da.SearchCursor('spointlyr', ["GridID"]) as cursor:
-    for row in cursor:
-            #print(x)
-            #x=x+1
-            print(row[0])
-            if row[0]==294478:
-                #print(row[0])
-                subcatch_id = row[0]
+maxaccdic = defaultdict(list)
+errorlist = []
+with arcpy.da.SearchCursor(wd+'catlakac_sub.dbf', ["VALUE", "MAX", "MAJORITY"]) as Outcursor:
+    for Outrow in Outcursor:
+            print(x)
+            x=x+1
+            print(Outrow[0])
+            try:
+                subcatch_id = Outrow[0]
                 expr = '"GridID" = %s' %subcatch_id
                 arcpy.SelectLayerByAttribute_management('spointlyr', 'NEW_SELECTION', expr)
-                arcpy.TraceGeometricNetwork_management(in_geometric_network= network, out_network_layer = "up_trace_lyr", in_flags = "spointlyr",
-                                                       in_trace_task_type= "TRACE_UPSTREAM")
-                up_tr = "up_trace_lyr\\lines"
-                #print('Trace done!')
-                try:
-                    array=arcpy.da.FeatureClassToNumPyArray(up_tr, sumfields)
-                    #print('Feature class to numpy array done!')
-                    if len(by_col)==0:
-                        by_col = numpy.array([tuple([array[i].sum() for i in nms if array[i].dtype.kind in ('i', 'f')]+[row[0]])],
-                                              dtype=array_types)
-                    elif len(by_col)>0 and len(by_col)<500:
-                        by_col = numpy.concatenate((by_col,numpy.array([tuple([array[i].sum() for i in nms if array[i].dtype.kind in ('i', 'f')]+[row[0]])],dtype=array_types)),axis=0)
-                    elif len(by_col)==500:
-                        by_col = numpy.concatenate((by_col,numpy.array([tuple([array[i].sum() for i in nms if array[i].dtype.kind in ('i', 'f')]+[row[0]])],dtype=array_types)),axis=0)
-                        scratch=arcpy.da.NumPyArrayToTable(by_col, scratch_tab)
-                        #print('Numpy array to table done!')
-                        arcpy.Append_management(scratch_tab, sumout_tab, "TEST")
-                        #print('Append done!')
-                        arcpy.Delete_management(scratch_tab)
-                        by_col = numpy.empty([0, len(array_types)], dtype=array_types)
-                except:
-                    print('Error with numpy array method, use arcpy.Statistics_analysis')
-                    inmemtab = r"in_memory/scratch"
-                    arcpy.Statistics_analysis(up_tr, inmemtab, catstatslist)
-                    print("stats analysis failed")
-                    arcpy.AddField_management(inmemtab, field_name='GridID', field_type='LONG')
-                    #with arcpy.da.UpdateCursor(inmemtab, ['GridID']) as cursormem:
-                    #    for rowmem in cursormem:
-                    #        rowmem[0]=row[0]
-                    #        cursormem.updateRow(rowmem)
-                    #del rowmem
-                    #del cursormem
-                    arcpy.CalculateField_management(inmemtab,field='GridID', expression=row[0])
-                    arcpy.Append_management(inmemtab, memerror_tab, "TEST")
-                    arcpy.Delete_management(inmemtab)
-    scratch=arcpy.da.NumPyArrayToTable(by_col, scratch_tab)
-    #print('Numpy array to table done!')
-    arcpy.Append_management(scratch_tab, sumout_tab, "TEST")
-arcpy.Delete_management(scratch_tab)
+                arcpy.TraceGeometricNetwork_management(in_geometric_network= network, out_network_layer = "down_trace_lyr", in_flags = "spointlyr",
+                                                       in_trace_task_type= "TRACE_DOWNSTREAM")
+                up_tr = "down_trace_lyr\\lines"
+                with arcpy.da.SearchCursor(up_tr, ['GridID']) as Incursor:
+                    for Inrow in Incursor:
+                        maxaccdic[Inrow[0]].append([Outrow[1], Outrow[2]])
+            except:
+                print('No flag found')
+                #These are catchments < 118 pixels without corresponding line segment. Here only occur in endorheic lakes.
+                #and does not impact downstream routing as there are no downstream segments of endorheic point of max accumulation.
 arcpy.Delete_management('spointlyr')
-del row
-del cursor
+del Inrow
+del Outrow
+del Incursor
+del Outcursor
 end = time.time()
 print(end - start)
 
+#Only keep maximum accumulation value for each segment downstream of one or more lakes
+maxaccdicsub = defaultdict(list)
+for k, v in maxaccdic.iteritems(): #For each segment downstream of a lake
+    for lst in v: #For each upstream lake
+        try:
+            if lst[0]>maxaccdicsub[k][0]: #If lake accumulation value > previous lake acc value for that segment
+                maxaccdicsub[k]=lst #Replace the value in the output dic
+        except: #If this segment does not have a lake acc value yet
+            maxaccdicsub[k]=lst #Add the current lake acc value to the output dic
+
+#Make table of watershed lake index
+wslaktab =  gdbname_ws+'Ws_lakeindex'
+arcpy.MakeTableView_management(sline, 'sline_view')
+arcpy.AddJoin_management('sline_view', 'GridID', wd+gdbname_cat+'/lakeacc', 'Value')
+arcpy.CopyRows_management('sline_view', wslaktab)
+
+#######TO RUN, THEN MERGE WITH MAIN ATTRIBUTE TABLE, COMPUTE PROPER LAKE INDEX, RE-RUN DEDUCTIVE CLASSIFICATION
+arcpy.AddField_management(in_table=wslaktab, field_name='MaxLakAcc', field_type='LONG')
+arcpy.CalculateField_management(wslaktab, 'MaxLakAcc', expression=0)
+arcpy.AddField_management(in_table=wslaktab, field_name='Hylak_id', field_type='LONG')
+
+[f.name for f in arcpy.ListFields(wslaktab)]
+
+with arcpy.da.UpdateCursor(wslaktab, ['GridID', 'Value','MaxLakAcc', 'MAX','Hylak_id','MAJORITY']) as cursor:
+    for row in cursor:
+        if row[0]==row[1]: #If segment intersects lake, get accumulation value from Catchment lakeacc table
+            row[2]=row[3]
+            row[4]=row[5]
+        if row[0] in maxaccdicsub.keys(): #IF segment is downstream from a lake
+            row[2]=maxaccdicsub[row[0]][0]  #Get accumulation from the dictionary
+            row[2]=maxaccdicsub[row[0]][5]
+        cursor.updateRow(row)
+del row
+del cursor
 
 #################################################
 #Make a copy and merge tables with SUM statistics
