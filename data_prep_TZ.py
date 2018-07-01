@@ -1241,7 +1241,7 @@ with arcpy.da.UpdateCursor(slinecatws, ['WsArea','WsLen_1','WsDen','WsRoadDen','
 arcpy.MakeFeatureLayer_management(slinecatws, 'slinecatws_lyr')
 arcpy.AddJoin_management('slinecatws_lyr', 'GridID', wslaktab, 'GridID')
 slinecatws_index=gdbname_ws+'slinecatws_lakeindex'
-arcpy.CopyRows_management('slinecatws_lyr',slinecatws_index)
+arcpy.CopyFeatures_management('slinecatws_lyr',slinecatws_index)
 arcpy.DeleteField_management(slinecatws_index, ['OBJECTID_1','GridID_1'])
 
 [f.name for f in arcpy.ListFields(slinecatws_index)]
@@ -1250,7 +1250,7 @@ with arcpy.da.UpdateCursor(slinecatws_index, ['CatFlowAcc','WsLakInd','MaxLakAcc
         row[1]=float(row[2])/float(row[0])
         cursor.updateRow(row)
     del row, cursor
-arcpy.CopyRows_management(slinecatws_index,slinecatws)
+arcpy.CopyFeatures_management(slinecatws_index,slinecatws)
 arcpy.Delete_management(slinecatws_index)
 arcpy.DeleteField_management(slinecatws, 'WsResInd')
 arcpy.DeleteField_management(slinecatws, 'MaxLakAcc')
