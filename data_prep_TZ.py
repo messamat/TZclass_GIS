@@ -1,12 +1,13 @@
 __author__ = 'Mathis Messager'
+#Contact info: messamat@uw.edu
 #Creation date: 2018/03/08
-#Last updated: 2018/26/08
+#Last updated: 2018/08/04
 
 #Project: USAID/TANZANIA
 #Technical Assistance to Support the Development of Irrigation and Rural Roads Infrastructure Project (IRRIP2)
 #(Contract No. EDH-I-00-08-00023-00 621-TO 12)
 
-#Purpose: Format spatial data for analysis
+#Purpose: Format and analyze spatial data for the river classification of Tanzania
 
 #Bugs to correct
     #Compute max statistics
@@ -16,7 +17,7 @@ __author__ = 'Mathis Messager'
 import arcpy
 from arcpy import env
 from arcpy.sa import *
-import ArcHydroTools
+import ArcHydroTools #Need to be downloaded and installed
 import os
 import sys
 import numpy
@@ -35,8 +36,8 @@ else:
     arcpy.AddError("Unable to get spatial analyst extension")
     arcpy.AddMessage(arcpy.GetMessages(0))
     sys.exit(0)
-#TO UPDATE
-rootdir="F:/Tanzania/Tanzania/"
+
+rootdir="F:/Tanzania/Tanzania/" ####TO UPDATE####
 datadir= rootdir + "data/"
 wd = rootdir + "results/"
 outhydro = wd + "outhydro.gdb/"
@@ -51,8 +52,10 @@ spoint = outhydro+'point118'
 ##################################################################################################################################
 # FUNCTIONS
 ##################################################################################################################################
+#Function that takes an unprojected raster in WGS84 as an input and outputs a grid of the same extent and resolution
+#with the pixel area for each pixel
 def WGS84_pixelarea(in_ras, out_wd=wd):
-    #Careful, only works for square grids
+    #Careful, only works for square grids and pixels
     #Require math, arcpy
     in_ras = Raster(in_ras)
     arcpy.env.extent = in_ras
@@ -87,6 +90,7 @@ def WGS84_pixelarea(in_ras, out_wd=wd):
     arcpy.Delete_management(pixelwidth)
     arcpy.Delete_management(ymap)
 
+#Custom version of ArcGIS Tabulate Area for an unprojected raster
 def ras_catcount(in_zone_data, in_class_data, output_wd, out_table, scratch_wd="C:\\temp", pixel_area=outhydro + 'pixelarea'): #class_data must be in integer format
     if pixel_area is None:
         if not arcpy.Exists(scratch_wd + '\\pixelarea.tif'):
@@ -113,7 +117,7 @@ def ras_catcount(in_zone_data, in_class_data, output_wd, out_table, scratch_wd="
             print("Create new numpy array done!")
             for row in cursor:
                 print(row[0])
-                classbool = Con(Raster(in_class_data)==row[0],pixel_area,0) #Create a raster of pixel area in cells with that category
+                classbool = Con(Raster(in_class_data)==row[0],pixel_area,0)
                 print("Boolean done!")
                 scratchtable=os.path.join(scratchgdb, 'catcount{}'.format(row[0]))
                 ZonalStatisticsAsTable(in_zone_data,'Value',classbool,scratchtable,"DATA","SUM")
@@ -145,14 +149,14 @@ def ras_catcount(in_zone_data, in_class_data, output_wd, out_table, scratch_wd="
 # FORMAT HYDROSHEDS DATA
 ##################################################################################################################################
 #Mosaic hydrologically conditioned DEM
-demconfolder = "F:/Tanzania/Tanzania/data/HydroSHEDS_201802/HydroSHEDS/DEMcon/"
+demconfolder = os.path.join(datadir,"HydroSHEDS_201802/HydroSHEDS/DEMcon")
 demconlist = []
 for (dirpath, dirnames, filenames) in os.walk(demconfolder):
     if len(dirnames)==2:
         demconlist.append(os.path.join(dirpath,dirnames[1]))
 arcpy.MosaicToNewRaster_management(demconlist, output_location=demconfolder, raster_dataset_name_with_extension="DEMcon", number_of_bands=1)
 #Mosaic direction raster
-dirfolder = "F:/Tanzania/Tanzania/data/HydroSHEDS_201802/HydroSHEDS/dir/"
+dirfolder = os.path.join(datadir,"HydroSHEDS_201802/HydroSHEDS/Dir")
 directionlist = []
 for (dirpath, dirnames, filenames) in os.walk(dirfolder):
     if len(dirnames)==2:
@@ -160,7 +164,7 @@ for (dirpath, dirnames, filenames) in os.walk(dirfolder):
 arcpy.MosaicToNewRaster_management(directionlist, output_location=dirfolder, raster_dataset_name_with_extension="dir", number_of_bands=1)
 #Create watershed polygon for Tanzania
 tzwtshd = outhydro + "tzwtshd"
-ArcHydroTools.BatchWatershedDelineationForPolygons("gadm1_lev0_Tanzania.shp", "dir", tzwtshd)
+ArcHydroTools.BatchWatershedDelineationForPolygons("gadm1_lev0_Tanzania.shp", "dir", tzwtshd) #Missing: select and output Tanzania's country boundary from gadm
 #Clip flow dir to Tanzania's drainage area
 dirtz = outhydro+"dir_tz"
 arcpy.Clip_management(dirfolder+"dir", arcpy.Describe(tzwtshd).extent, dirtz, in_template_dataset= tzwtshd,
@@ -194,7 +198,7 @@ ArcHydroTools.CatchmentPolyProcessing(scatch, scatchpoly)
 spoint = outhydro + "point118"
 arcpy.FeatureVerticesToPoints_management(sline, spoint, point_location='END')
 
-#Compute flow length
+#Compute flow length: did not compute
 """Projecting the direction raster changes the values of too many cells and thus changes the flow direction overall.
 However, flow length is not exact as it gives a measure in decimal degrees. If time allows, should create a weight
 raster that will be equal to the distance across a cell given its latitude and the flow direction with raster
@@ -203,21 +207,21 @@ calculator"""
 #########################################################################################################################
 # FORMAT ELEVATION DATA
 ########################################################################################################################
-SRTMfolder = "F:/Tanzania/Tanzania/data/SRTMGL1/unzipped/"
+SRTMfolder = os.path.join(datadir, "SRTMGL1/unzipped/")
 demlist = []
 for (dirpath, dirnames, filenames) in os.walk(SRTMfolder):
     if len(filenames) != 0:
        demlist.append(os.path.join(dirpath,filenames[0]))
-arcpy.MosaicToNewRaster_management(demlist, output_location="F:/Tanzania/Tanzania/data/SRTMGL1/", raster_dataset_name_with_extension="SRTMmosaic", number_of_bands=1)
+arcpy.MosaicToNewRaster_management(demlist, output_location=os.path.join(datadir,"SRTMGL1/"), raster_dataset_name_with_extension="SRTMmosaic", number_of_bands=1)
 #Clean erroneous values
-SRTMmosaic= Raster("F:/Tanzania/Tanzania/data/SRTMGL1/SRTMmosaic")
+SRTMmosaic= Raster(os.path.join(SRTMfolder, "SRTMmosaic"))
 SRTMmosaic_nodata = SetNull(SRTMmosaic, SRTMmosaic, "VALUE > 6000")
-SRTMmosaic_nodata.save("F:/Tanzania/Tanzania/results/SRTMnodata")
+SRTMmosaic_nodata.save(os.path.join(wd,"SRTMnodata"))
 SRTMmosaic_filled = EucAllocation(SRTMmosaic_nodata, maximum_distance="0.00416666665", out_distance_raster='SRTMfilleddis') #5-cells maximum fill-in
 SRTMmosaic_filled.save("srtmfilled")
 SRTMmosaic_clean = Con(IsNull(SRTMmosaic), SRTMmosaic, SRTMmosaic_filled) #To redefine coast as EucAlloc extended coast by 5 cells
 SRTMmosaic_clean.save("srtmclean")
-#Re-sample SRTM3 elevation at resolution and extent of catchments (conditioned DEM form hydrosheds is not suitable to compute
+#Re-sample SRTM3 elevation at resolution and extent of catchments (conditioned DEM from hydrosheds is not suitable to compute
 #slopes and elevation, aspect, etc. as many features are burnt and thus increase slope
 cs = (arcpy.GetRasterProperties_management(dirtz, 'CELLSIZEX')).getOutput(0)
 arcpy.env.snapRaster = scatch
@@ -228,7 +232,7 @@ arcpy.Resample_management(in_raster=wd+"srtmclean",out_raster=wd+'srtmclean90', 
     # - Profile curvature : "/results/profilcurvat"
 
 ########################################################################################################################
-#Get catchment characteristics
+#GET CATCHMENT CHARACTERISTICS
 ########################################################################################################################
 gdbname_cat = "catch_attri.gdb"
 #arcpy.CreateFileGDB_management(wd, gdbname_cat)
@@ -276,7 +280,7 @@ for f in arcpy.ListFields('dirtabulate'):
 #Water maximum extent
 arcpy.ClearEnvironment("snapRaster")
 maxextentras = "{0}{1}_20E_0N.tif;{0}{1}_30E_0N.tif;{0}{1}_30E_10N.tif;{0}{1}_30E_10S.tif".format(datadir + "Pekel2016\\","extent")
-arcpy.MosaicToNewRaster_management(maxextentras, "F:\\Tanzania\\Tanzania\\results\\",wd+"pekelextent.tif", "",
+arcpy.MosaicToNewRaster_management(maxextentras, wd,wd+"pekelextent.tif", "",
                                    "8_BIT_UNSIGNED", "", "1", "LAST", "FIRST") #Export in GRID format didn't work
 #Resample the catchment grid to match Pekel's resolution and alignment
 pekeltemplate=wd+"pekelextent.tif"
@@ -290,13 +294,13 @@ arcpy.Delete_management(scatchpekel)
 arcpy.Delete_management(wd+"pekelextent.tif")
 #Water cover occurrence
 maxchangeras = "{0}{1}_20E_0N.tif;{0}{1}_30E_0N.tif;{0}{1}_30E_10N.tif;{0}{1}_30E_10S.tif".format(datadir + "Pekel2016\\","occurrence")
-arcpy.MosaicToNewRaster_management(maxchangeras, "F:\\Tanzania\\Tanzania\\results\\","pekeloccur.tif", "", "8_BIT_UNSIGNED", "", "1", "LAST", "FIRST")
+arcpy.MosaicToNewRaster_management(maxchangeras, wd,"pekeloccur.tif", "", "8_BIT_UNSIGNED", "", "1", "LAST", "FIRST")
 ZonalStatisticsAsTable(scatchpekel, "Value",wd+'pekeloccur.tif', out_table="pekeloccur",ignore_nodata="DATA", statistics_type="MEAN")
 arcpy.AlterField_management("pekeloccur","MEAN","CatWatOcc")
 arcpy.Delete_management(wd+"pekeloccur.tif")
 #Water cover change
 maxchangeras = "{0}{1}_20E_0N.tif;{0}{1}_30E_0N.tif;{0}{1}_30E_10N.tif;{0}{1}_30E_10S.tif".format(datadir + "Pekel2016\\","change")
-arcpy.MosaicToNewRaster_management(maxchangeras, "F:\\Tanzania\\Tanzania\\results\\","pekelchange.tif", "", "8_BIT_UNSIGNED", "", "1", "LAST", "FIRST")
+arcpy.MosaicToNewRaster_management(maxchangeras, wd,"pekelchange.tif", "", "8_BIT_UNSIGNED", "", "1", "LAST", "FIRST")
 pekelchange = Raster(wd+"pekelchange.tif")
 pekelchange_format = Con(pekelchange < 253, pekelchange)
 pekelchange_format.save(wd+"pekelchange_format.tif")
@@ -306,7 +310,7 @@ arcpy.Delete_management(pekelchange)
 arcpy.Delete_management(wd+"pekelchange_format.tif")
 #Water cover seasonality
 maxchangeras = "{0}{1}_20E_0N.tif;{0}{1}_30E_0N.tif;{0}{1}_30E_10N.tif;{0}{1}_30E_10S.tif".format(datadir + "Pekel2016\\","seasonality")
-arcpy.MosaicToNewRaster_management(maxchangeras, "F:\\Tanzania\\Tanzania\\results\\","pekelseason.tif", "", "8_BIT_UNSIGNED", "", "1", "LAST", "FIRST")
+arcpy.MosaicToNewRaster_management(maxchangeras, wd,"pekelseason.tif", "", "8_BIT_UNSIGNED", "", "1", "LAST", "FIRST")
 ZonalStatisticsAsTable(scatchpekel, "Value",wd+'pekelseason.tif', out_table="pekelseason",ignore_nodata="DATA", statistics_type="MEAN")
 arcpy.AlterField_management("pekelseason","MEAN","CatWatSea")
 arcpy.Delete_management(wd+"pekelseason.tif")
@@ -724,10 +728,6 @@ with arcpy.da.UpdateCursor(attriformat, watareafields) as cursor:
 del row
 del cursor
 
-
-#Run, then delete, then run 703-752, then run "Compute watershed max statistics", then append river order>1 max statistics with river order=1, then append to final table, then copy to final dataset.
-
-
 ######################################################################################################################
 #Route attributes to full watershed for each segment
 #########################################################################################################################
@@ -768,15 +768,15 @@ sumtabfields = sumfields + ['GridID']
 arcpy.MakeFeatureLayer_management(outhydro+'linemidpoints_attri', 'spointlyrreduce',where_clause="ReaOrd>1") #Create another temporary layer as numpy array cannot hold the entire table (MemoryError: cannot allocate array memory)
 array_sum =arcpy.da.FeatureClassToNumPyArray('spointlyrreduce', sumtabfields)
 arcpy.da.NumPyArrayToTable(array_sum, scratch_tab)
-#arcpy.CreateTable_management(wd+'watershed_attri.gdb', 'Ws_Attri_Sum', scratch_tab)
+arcpy.CreateTable_management(wd+'watershed_attri.gdb', 'Ws_Attri_Sum', scratch_tab)
 arcpy.Delete_management(scratch_tab)
 arcpy.Delete_management('spointlyrreduce')
 
 #Create template table for appending data when cannot allocate memory to numpy array
 memerror_tab = 'Ws_Attri_Sum_MemoryError'
-#arcpy.Statistics_analysis('spointlyr', memerror_tab, catstatslist)
-#arcpy.AddField_management(memerror_tab, field_name='GridID', field_type='LONG')
-#arcpy.CalculateField_management(memerror_tab,field='GridID', expression='999999')
+arcpy.Statistics_analysis('spointlyr', memerror_tab, catstatslist)
+arcpy.AddField_management(memerror_tab, field_name='GridID', field_type='LONG')
+arcpy.CalculateField_management(memerror_tab,field='GridID', expression='999999')
 
 nms= array_sum.dtype.names[:-1]
 array_types = [(i,array_sum[i].dtype.kind) for i in nms if array_sum[i].dtype.kind in ('i', 'f')] + [('GridID','i')]
@@ -848,7 +848,7 @@ print(end - start)
 # Compute watershed MAX statistics
 #   Edit 2018/06/29: did not process these statistics for all of Tanzania. 10-day processing times. Future iterations could
 #   merge this loop with the SUM statistics loop. In the end, compute watershed lake and reservoir index with quicker method
-#   see L XXX and this loop would only be useful to compute WsElvMax, which is not used later on. So commented this section
+#   see L 912 and this loop would only be useful to compute WsElvMax, which is not used later on. So commented this section
 #   out.
 ########################################################################################################################
 
@@ -911,10 +911,6 @@ print(end - start)
 
 ########################################################################################################################
 # Compute watershed lake and reservoir indices
-#Order from low to high accumulation
-#Loop through each segment with max accumulation, select all segments downstream
-#Assign accumulation to all segments downstream
-#Make subset of reaches to get data for
 arcpy.MakeFeatureLayer_management(outhydro+'linemidpoints_attri', 'spointlyr',where_clause="ReaOrd>=1")
 start = time.time()
 x=0
@@ -988,7 +984,7 @@ for f in delfield:
     arcpy.DeleteField_management(wslaktab, f)
 
 ###################################################################################################################################################
-#Make a copy and merge tables with SUM statistics
+#Make a copy of tables and merge tables with SUM statistics
 arcpy.Copy_management(in_data=memerror_tab,out_data='Ws_Attri_Sum_MemoryError_20180531')
 arcpy.Copy_management(in_data=sumout_tab,out_data=sumout_tab+'_20180531')
 #Delete dummy first line in memerror_tab
