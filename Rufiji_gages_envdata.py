@@ -1,6 +1,6 @@
 __author__ = 'Mathis Messager'
 #Creation date: 2018/03/08
-#Last updated: 2018/26/08
+#Last updated: 2018/08/04
 
 #Project: USAID/TANZANIA
 #Technical Assistance to Support the Development of Irrigation and Rural Roads Infrastructure Project (IRRIP2)
@@ -9,8 +9,6 @@ __author__ = 'Mathis Messager'
 #Purpose: Link gages to GIS river network and export environmental characteristics
 import arcpy
 from arcpy import env
-from arcpy.sa import *
-import os
 import sys
 
 arcpy.env.overwriteOutput = True
@@ -66,10 +64,10 @@ arcpy.Near_analysis(in_features, near_features, search_radius, location, angle)
 snap_env = [linesproj, "EDGE", "50 meters"]
 arcpy.Snap_edit(gagesproj, [snap_env])
 #Inspect those gages using satellite imagery and alternative river networks,verify that those snapped make sense, manually snap the others — in ArcGIS
-#40/58 are snapped manually
-#arcpy.CopyFeatures_management(gagesproj, "snap_edit")
-#arcpy.AddField_management("snap_edit", 'snap_manual', 'TEXT')
-#arcpy.AddField_management("snap_edit", 'Comment', 'TEXT',field_length=200)
+#40/58 were snapped manually
+arcpy.CopyFeatures_management(gagesproj, "snap_edit")
+arcpy.AddField_management("snap_edit", 'snap_manual', 'TEXT')
+arcpy.AddField_management("snap_edit", 'Comment', 'TEXT',field_length=200)
 
 #####################################################################
 # SNAP FROM HERE IF RIVER ENVIRONMENTAL ATTRIBUTES HAVE BEEN CHANGED
